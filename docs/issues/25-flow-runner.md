@@ -17,6 +17,11 @@ shape is validated in issue 02; runtime behavior lives here.
 ## Scope
 
 - `src/audit/flows.ts`.
+- Registry entry + catalog message for `runtime/probe/flow-failed`
+  (moderate, `bestPractice: true`, `fixability: none`, source tool
+  `a11y-bot-probe`).
+- Fixture pages/flows under `fixtures/flows/` and the keyboard-only example
+  flow documented in the module docstring.
 
 ## Detailed Requirements
 
@@ -31,38 +36,54 @@ shape is validated in issue 02; runtime behavior lives here.
    | `screenshot` | name `[a-z0-9-]{1,40}` | full-page screenshot to evidence |
    | `expectFocus` | selector | assert `document.activeElement` matches selector |
    | `expectVisible` | selector | assert locator visible |
-2. Execution: steps sequential; each step wrapped with: start/finish timestamps,
-   the acting element's descriptor (click/fill/expect*), console errors emitted
-   during the step, and an automatic small screenshot on failure.
-3. Failure semantics (normative): first failing step → flow status `failed`,
-   finding `runtime/probe/flow-failed` (moderate) with
-   `{ flow, step index, step type, reason }` in message + evidenceRefs;
+2. Flow-level semantics (DESIGN §11.5): each configured flow runs exactly once
+   against the provisioned target named by `flows[].target`, in a fresh page of
+   the context for `flows[].viewport` (default: the first configured
+   viewport); flows run after the probes for that target, sequentially in
+   config order.
+3. Execution: steps sequential; each step wrapped with: start/finish
+   timestamps, the acting element's descriptor
+   `{ selector (as configured), tag, id?, testId?, bbox }` for
+   click/fill/expect* steps, console errors emitted during the step, and an
+   automatic full-page failure screenshot named `step-NN-failure.png`.
+4. Failure semantics (normative): first failing step → flow status `failed`,
+   finding `runtime/probe/flow-failed` with
+   `{ flow, step index, step type, reason }` in messageParams + evidenceRefs;
    remaining steps skipped; other flows still run. Step timeout uses the
    payload/table defaults — no global override in v1.
-4. Evidence: per step JSON `flows/<flow>/step-NN.json` + screenshots
-   `step-NN.png` (failure or explicit `screenshot` step) via EvidenceSink;
-   flow summary JSON (status, duration, steps executed).
-5. `fill` values come from config (trusted); still masked in evidence when the
+5. Evidence via the EvidenceSink interface (issue 22 — scrubbing and path
+   validation are sink-enforced, T7/T11), under the bundle layout of DESIGN
+   §11.6: `targets/<target>/<viewport>/flows/<flow>/step-NN.json`,
+   `…/step-NN.png` (explicit `screenshot` steps), `…/step-NN-failure.png`,
+   and `…/summary.json` (status, durationMs, stepsExecuted, stepsTotal).
+   `writeScreenshot` returning null (global `audit.maxScreenshots` cap, sink-
+   enforced) is recorded in the step JSON as `screenshot: "skipped-cap"`.
+6. `fill` values come from config (trusted); still masked in evidence when the
    selector or a nearby label matches `/(password|token|secret|otp)/i` → value
    recorded as `***` in step JSON (defense in depth for evidence sharing,
-   §14.2 T7); screenshots after such steps are taken BEFORE the fill renders?
-   — not reliably possible: instead, steps that filled masked fields mark the
-   flow's subsequent screenshots with `containsSensitiveInput: true` in the
-   manifest so users/CI can exclude them from artifact upload (document in 26
-   manifest schema; implement flag here).
-6. Keyboard-only journey pattern documented in the module docstring + example
+   §14.2 T7). Steps that filled masked fields call the sink's
+   `markFlowSensitive(flow)` (issue-22 interface) so the manifest (written by
+   issue 26) can flag `containsSensitiveInput: true` and users/CI can exclude
+   those screenshots from artifact upload.
+7. Keyboard-only journey pattern documented in the module docstring + example
    config (goto → repeated `press: Tab` → `expectFocus` → `press: Enter` →
    `waitFor`), used by a fixture test.
 
 ## Acceptance Criteria
 
-- [ ] Happy-path flow on fixture site: all steps pass, evidence files complete.
+- [ ] Happy-path flow on fixture site: all steps pass, evidence files at the
+      exact §11.6 paths incl. summary.json.
 - [ ] Each failure mode tested: selector timeout, expectFocus mismatch,
       expectVisible timeout, navigation error → correct finding + skip + other
-      flows continue.
+      flows continue; `flow-failed` registry entry + message present.
 - [ ] Origin escape attempt (`goto: https://example.com`) rejected at runtime
       (belt) and by schema (suspenders) — both tested.
-- [ ] Sensitive-fill masking + screenshot flag behavior tested.
+- [ ] Sensitive-fill masking + `markFlowSensitive` call verified (stub sink);
+      screenshot-cap `skipped-cap` recording verified.
+- [ ] Security (T7/T11): step JSON URLs scrubbed via sink; hostile flow/step
+      derived names impossible by schema (negative schema test).
+- [ ] Viewport/target resolution semantics tested (named viewport, default
+      viewport, flow order).
 - [ ] Keyboard-only fixture flow passes and produces the documented evidence
       sequence.
 
@@ -74,7 +95,7 @@ npm test -- src/audit/flows
 
 ## Dependencies
 
-21, 02 (+ session from 22 at integration level).
+02, 21, 22 (browser session + EvidenceSink interface).
 
 ## Non-goals
 

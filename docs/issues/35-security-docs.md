@@ -16,7 +16,8 @@ can touch and why), and a verification checklist that release (36) gates on.
 ## Scope
 
 - `SECURITY.md` (repo root), `docs/security/threat-model.md`,
-  `docs/security/permissions.md`; cross-link pass over README and guides.
+  `docs/security/permissions.md`; cross-link pass over `README.md`,
+  `docs/guides/workflows.md`, and `docs/guides/llm-providers.md`.
 
 ## Detailed Requirements
 
@@ -44,9 +45,10 @@ can touch and why), and a verification checklist that release (36) gates on.
      screenshots, `containsSensitiveInput` flag).
 4. Verification checklist (embedded in threat-model doc, checked in 36's
    release gate): each T-row's test exists and passed in the latest CI run;
-   `grep pull_request_target` clean; redaction tests green; dist staleness
-   check green; lockfile audit (`npm audit --omit dev` policy: no high/critical
-   unpatched — exceptions documented inline).
+   workflow files free of `pull_request_target` (`examples/` and
+   `.github/workflows/` — prose docs exempt); redaction tests green; dist
+   staleness check green; lockfile audit (`npm audit --omit=dev` policy: no
+   high/critical unpatched — exceptions documented inline).
 5. README security section: 5-line summary linking the three docs.
 
 ## Acceptance Criteria
@@ -63,7 +65,11 @@ can touch and why), and a verification checklist that release (36) gates on.
 ## Validation
 
 ```bash
-npm test -- docs-consistency   # template/permissions extraction test
+npm test -- docs-consistency                 # template/permissions extraction test
+! grep -rn pull_request_target examples/ .github/workflows/
+npm audit --omit=dev --audit-level=high
+npm run build && git diff --exit-code dist/  # dist staleness
+npm test -- redaction                        # T3 suite green
 ```
 
 ## Dependencies
@@ -77,4 +83,4 @@ bounty setup.
 
 ## Design References
 
-DESIGN.md §14 (all); ISSUE_PLAN §Validation.7.
+DESIGN.md §14 (all), §18 (release security); ISSUE_PLAN §Validation.7.

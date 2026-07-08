@@ -10,8 +10,8 @@ schema-constrained, advisory UX findings rendered in audit reports.
 ## Context
 
 DESIGN.md §10.3 (analyst) and ADR-005: the browser is closed before the model
-runs; input is only the deterministic evidence. Output is advisory — never gates
-CI, never enters the baseline (12.6).
+runs; input is only the deterministic evidence. Output is advisory — never
+gates CI, never enters the baseline (DESIGN §12.2 / issue 12 requirement 6).
 
 ## Scope
 
@@ -40,16 +40,25 @@ CI, never enters the baseline (12.6).
    ```
    Max 20 findings per call (schema `maxItems`).
 3. Validation pipeline per finding: schema (client) → `validateLlmText` on
-   title/description (prose kind) → `wcagRefs` must match SC regex and exist in
-   a vendored SC list (else dropped) → `evidenceRefs` must exist in the bundle
-   (reader from 26; else ref dropped, finding kept if ≥ 0 refs remain? NO —
-   finding kept only if at least one valid ref remains OR category `structure`
-   with outline-based rationale; otherwise dropped) → confidence < 0.3 dropped.
-   Dropped counts surface as `llm.rejectedOutputs` (19.6).
-4. Accepted findings → unified findings: ruleId `ux/llm/<category>`,
-   `advisory: true`, severity mapped `advisory|low → minor`, `medium →
-   moderate`, `high → serious` (display only — advisory flag excludes gating),
-   engine `ux`, target set, evidenceRefs preserved.
+   title/description (prose kind) → `wcagRefs` must match the SC regex and
+   exist in the vendored SC list `src/core/wcag-sc-list.ts` (issue 03; invalid
+   refs dropped from the array) → every `evidenceRefs` entry must exist in the
+   bundle (reader from 26; nonexistent refs dropped) → the finding is KEPT only
+   if at least one valid evidenceRef remains (no exceptions) AND
+   confidence ≥ 0.3. Dropped findings increment the issue-19 requirement-6
+   counter (`rejectedOutputs`), surfaced via `run.llm` in the report envelope
+   (issues 18/09).
+4. Accepted findings → unified findings via `createFinding` (issue 03 dynamic
+   namespace `ux/llm/`): ruleId `ux/llm/<category>`, `engine: "ux"`,
+   `advisory: true`, `confidence` set, severity input mapped
+   `advisory|low → minor`, `medium → moderate`, `high → serious` (display
+   only), `wcag` = validated refs (empty allowed — advisory), `fixability:
+   "none"`, `source` = the dynamic-namespace template
+   `{ tool: "a11y-bot-analyst", version: <package version>, ruleId:
+   <category> }`, `target` = the audited target/viewport, `rawMessage` =
+   validated description (message resolution), `evidenceRefs` preserved;
+   fingerprint inputs per §7.3 runtime form use target name + normalized
+   title as the snippet.
 5. Rendering: markdown report's "Advisory UX findings (AI-assisted)" section
    (10) with confidence column; JSON report includes them with `advisory: true`.
 6. Failure containment: LlmUnavailable / all-rejected → audit completes
@@ -59,12 +68,20 @@ CI, never enters the baseline (12.6).
 ## Acceptance Criteria
 
 - [ ] Stub-provider integration test: canned evidence bundle → expected
-      advisory findings in JSON + markdown outputs.
-- [ ] Validation drops: bad wcagRef, nonexistent evidenceRef, low confidence,
-      hostile description (adversarial corpus reuse) — each tested.
+      advisory findings in JSON + markdown outputs (through the issue-27 hook
+      and issue-10 renderer).
+- [ ] Validation drops: bad wcagRef, nonexistent evidenceRef, zero-valid-refs,
+      low confidence, hostile description (adversarial corpus reuse) — each
+      tested and counted in `run.llm.rejectedOutputs`.
 - [ ] Sensitive-flow screenshot exclusion tested.
+- [ ] Security (DESIGN §14.2 T1/T7/T8, §10.2): assembled prompts pass
+      `assertPromptClean` (env canaries, absolute paths); stub payloads pass
+      `assertNoToolFields`; only bundle-local images are attached (no remote
+      fetch — request log assertion); maxCalls/timeout caps enforced
+      (budget test); analyst wall-clock cap abandons cleanly.
 - [ ] Budget: 3 targets, maxCalls=2 → third skipped with notice.
-- [ ] No-key mode: audit output identical to analyst-disabled run (snapshot).
+- [ ] No-key or disabled mode: audit output identical to analyst-disabled run
+      (snapshot).
 
 ## Validation
 
@@ -74,7 +91,7 @@ npm test -- src/llm/analyst
 
 ## Dependencies
 
-26, 19.
+10 (rendering), 19, 26, 27 (analyst hook + report integration).
 
 ## Non-goals
 

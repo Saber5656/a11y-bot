@@ -23,16 +23,20 @@ plugin's exported rules. jsx-a11y `flat/recommended` has ~35 rules (research doc
 
 1. Profile fragment: files `**/*.{jsx,tsx}`, `typescript-eslint` parser
    (jsx enabled, no type info), plugin `jsx-a11y`, rules = every rule in
-   `flat/recommended` at its recommended level (off-by-default upstream rules
-   like `control-has-associated-label` are included in the table with
-   `defaultSeverity` noted and rule turned off — table row exists regardless).
-2. Rule map: one row per plugin rule. Row shape (compile-time typed):
+   `flat/recommended` at its recommended level. Rules the plugin exports but
+   recommended leaves off (e.g. `control-has-associated-label`) still get a
+   table row with `enabled: false`.
+2. Rule map: one row per plugin rule using the shared `RuleMapRow` type from
+   issue 05 (`src/static/rule-maps/types.ts`). Example row:
    ```ts
    { upstream: "alt-text", unified: "static/jsx-a11y/alt-text",
      wcag: [{ sc: "1.1.1", level: "A", version: "2.0" }],
      defaultSeverity: "serious", fixability: "content_required",
-     messageId: "jsx-a11y.alt-text" }
+     enabled: true, messageId: "jsx-a11y.alt-text",
+     docsUrl: "<upstream rule docs URL>" }
    ```
+   `docsUrl` is the upstream rule documentation URL (required per row — it is
+   the registry `docsUrl`).
    Normative fixability assignments (the fix engine keys off these):
    | upstream rule | fixability |
    |---|---|
@@ -43,12 +47,12 @@ plugin's exported rules. jsx-a11y `flat/recommended` has ~35 rules (research doc
    | `no-autofocus` | auto_review |
    | `no-redundant-roles` | auto_safe |
    | `tabindex-no-positive` | auto_review |
-   | `anchor-is-valid`, `click-events-have-key-events`, `label-has-associated-control`, `media-has-caption`, all `no-noninteractive-*`, `no-static-element-interactions`, `interactive-supports-focus`, `role-has-required-aria-props`, `role-supports-aria-props`, `aria-role`, `aria-proptypes`, `aria-unsupported-elements`, `aria-activedescendant-has-tabindex`, `autocomplete-valid`, `heading-has-content`, `anchor-has-content`, `html-has-lang`*, `lang`*, `iframe-has-title`*, `mouse-events-have-key-events`, `no-distracting-elements`, `scope`, remaining rules | manual (v1) |
+   | `html-has-lang`, `lang` | auto_safe with `configGated: "fix.defaults.lang"` (fixer inactive unless that config path is set — DESIGN §7.2) |
+   | `iframe-has-title` | content_required |
+   | `anchor-is-valid`, `click-events-have-key-events`, `label-has-associated-control`, `media-has-caption`, all `no-noninteractive-*`, `no-static-element-interactions`, `interactive-supports-focus`, `role-has-required-aria-props`, `role-supports-aria-props`, `aria-role`, `aria-proptypes`, `aria-unsupported-elements`, `aria-activedescendant-has-tabindex`, `autocomplete-valid`, `heading-has-content`, `anchor-has-content`, `mouse-events-have-key-events`, `no-distracting-elements`, `scope` | manual (v1) |
 
-   *`html-has-lang`/`lang`: fixability `auto_safe` only when `fix.defaults.lang`
-   is configured (engine-level condition; table stores `auto_safe_config_gated`,
-   a fixability modifier defined in issue 03 as metadata flag
-   `configGated: "fix.defaults.lang"`). `iframe-has-title`: content_required.
+   **Normative default**: any plugin rule not named in this table registers as
+   `manual` — the table plus this default is the exhaustive assignment.
 3. WCAG refs: assign per rule from the jsx-a11y docs' WCAG annotations; rules
    documented as best-practice-only get `bestPractice: true` and empty wcag.
    The implementer records the mapping source URL per row as a code comment.
@@ -66,6 +70,10 @@ plugin's exported rules. jsx-a11y `flat/recommended` has ~35 rules (research doc
 - [ ] Fixture React components produce expected findings (≥ 8 distinct rules
       covered, incl. alt-text, aria-props typo, tabindex positive, no-access-key)
       with correct unified ids, wcag arrays, fingerprints (snapshot test).
+- [ ] Finding provenance verified: `source = { tool: "eslint-plugin-jsx-a11y",
+      version: <installed>, ruleId: <upstream> }` and `file` is repo-relative
+      POSIX (assertions on Windows-style separators included).
+- [ ] Every registered row carries a non-empty `docsUrl` (registry sweep test).
 - [ ] `scan.rules` severity overrides (`off`/`warn`/`error`) applied via the
       shared mechanism (§8.3) — at least one override tested here.
 - [ ] All mapped messageIds resolve in the English catalog (no fallback logs).
@@ -86,4 +94,5 @@ Fix implementations (15); Vue/HTML rules (07/08).
 
 ## Design References
 
-DESIGN.md §7.2, §8.2–8.3, §9.1; research/2026-07-static-lint-engines.md.
+DESIGN.md §7.1 (Finding fields), §7.2 (registry, configGated), §7.3
+(fingerprints), §8.2–8.3, §9.1; research/2026-07-static-lint-engines.md.

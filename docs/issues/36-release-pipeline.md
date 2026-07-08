@@ -24,29 +24,36 @@ U6: re-verify at publish). Release security is part of the threat model (T10).
 2. `release.yml`:
    - `permissions: { contents: write, id-token: write }` (provenance needs
      id-token; contents for the GitHub release + major-tag move);
+   - supply-chain hygiene (T10): every job uses `npm ci` against the committed
+     lockfile; all third-party actions version-pinned;
    - jobs: verify (full CI suite reuse via `workflow_call` or duplicated steps
      — choose and document) → publish (`npm publish --provenance --access
-     public`, `NPM_TOKEN` from repo secret; registry 2FA/automation-token setup
-     documented for the maintainer, agent does not create tokens) → GitHub
-     Release with changelog excerpt → move/force `v1` major tag to the release
-     commit (documented action or script; this is the ONE permitted force
-     operation outside `a11y-bot/*` because it targets tags owned by releases —
-     add explicit note to threat model in this PR).
+     public`, plus `--tag next` when the version contains a prerelease suffix
+     (`-`), `latest` otherwise; `NPM_TOKEN` from repo secret; registry
+     2FA/automation-token setup documented for the maintainer, agent does not
+     create tokens) → GitHub Release with changelog excerpt → move/force the
+     `v1` major TAG to the release commit (documented action or script; this
+     is the tag-ref exception already recorded in DESIGN §14.2 T6 — issue 35's
+     threat-model doc must carry the same note).
 3. Pre-publish assertions in the workflow: `npm pack` file list matches
-   allowlist (dist, schemas, action.yml, README, LICENSE, CHANGELOG); bin
-   executes (`node dist/cli/index.js --version` equals tag); U6 name check
-   (`npm view a11y-bot` 404 or owned by this account — else abort with
-   fallback plan `@<owner>/a11y-bot` documented in README note).
-4. Release gate checklist (executed for `1.0.0`, recorded in the release PR):
-   - all 36 issues closed; E2E green on the release commit;
+   allowlist (dist, schemas, action.yml, README, LICENSE, CHANGELOG,
+   package.json); bin executes and `node dist/cli/index.js --version` equals
+   the tag **with the leading `v` stripped** (`v1.2.3` ↔ `1.2.3`); U6 name
+   check: `npm view a11y-bot` must 404 (name free) — otherwise abort and
+   switch to the documented fallback scope `@saber5656/a11y-bot` (GitHub
+   owner's scope; README + action docs updated in the same change).
+4. Release gate checklist at `docs/release/v1-gate-checklist.md` (executed for
+   `1.0.0`, committed with checkboxes):
+   - issues 01–35 all closed; this issue's own acceptance criteria green;
+   - E2E green on the release commit;
    - security checklist from issue 35 all green;
    - scratch-repo manual validation of `fix-pr` + scheduled workflow (30/32)
      re-run on the release candidate;
    - README quickstart validated by following it verbatim on a fresh machine
      container (documented transcript).
-5. `CHANGELOG.md`: keep-a-changelog format seeded with `1.0.0` sections
-   generated from wave summaries (manual curation allowed; no auto-generation
-   dependency in v1).
+5. `CHANGELOG.md`: keep-a-changelog format; the `1.0.0` entry is curated
+   manually from ISSUE_PLAN.md's wave table + the closed-issue titles (no
+   auto-generation dependency in v1).
 6. README completion: badges (CI, npm), quickstart (init → scan → fix-pr),
    Action usage block, links to guides + security docs. README stays English;
    existing Japanese one-liner replaced (with the owner-approved English
@@ -55,26 +62,37 @@ U6: re-verify at publish). Release security is part of the threat model (T10).
 
 ## Acceptance Criteria
 
-- [ ] Tag-push dry run on a prerelease tag (`v1.0.0-rc.1`, `--tag next`)
-      publishes to npm with provenance verified
-      (`npm view a11y-bot@1.0.0-rc.1 --json` provenance field) — or to the
-      scoped fallback if U6 fails, with docs updated accordingly.
+- [ ] RC exercise green end-to-end (commands below): prerelease publish with
+      provenance verified and `next` dist-tag — or the scoped fallback if U6
+      fails, with docs updated accordingly.
 - [ ] Pack-allowlist and version-match assertions demonstrated failing on a
       deliberate mismatch (negative test in a draft, reverted).
-- [ ] `v1` major tag mechanism works (rc exercise) and threat-model note added.
-- [ ] Release-gate checklist document committed and fully checked for 1.0.0.
+- [ ] `v1` major tag mechanism works (rc exercise) and the threat-model doc
+      carries the T6 tag-exception note.
+- [ ] T10 checks in release.yml verified: `npm ci` everywhere, pinned action
+      versions (grep in workflow file).
+- [ ] `docs/release/v1-gate-checklist.md` committed and fully checked for
+      1.0.0.
 - [ ] README final text owner-approved; quickstart transcript linked.
 
 ## Validation
 
 ```bash
 npm pack --dry-run
-# rc tag exercise per requirements 2–3
+# RC exercise (run on the release-candidate commit):
+git tag v1.0.0-rc.1 && git push origin v1.0.0-rc.1
+# wait for release.yml, then:
+npm view a11y-bot@1.0.0-rc.1 dist-tags --json     # expect tag "next"
+npm view a11y-bot@1.0.0-rc.1 --json | grep -i provenance
+npm dist-tag ls a11y-bot                          # latest NOT moved by rc
+git ls-remote origin refs/tags/v1                 # major tag points at rc commit
+gh release view v1.0.0-rc.1 --json name,body      # GitHub Release created
 ```
 
 ## Dependencies
 
-34, 35.
+33, 34, 35 (33 is release-blocking: v1 ships with multi-provider support per
+the ISSUE_PLAN completion statement).
 
 ## Non-goals
 

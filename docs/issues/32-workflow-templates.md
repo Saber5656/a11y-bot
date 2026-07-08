@@ -30,8 +30,10 @@ deliverable with acceptance criteria, not ad-hoc README snippets.
 2. `scheduled-fix.yml`:
    - triggers `schedule` (weekly cron example) + `workflow_dispatch`;
    - `permissions: { contents: write, pull-requests: write }`;
-   - condition `if: github.repository == '<owner>/<repo>'` template comment
-     (avoid forks running crons);
+   - an ACTIVE job-level guard line
+     `if: github.repository == 'OWNER/REPO'` (fork-cron protection, T5) with
+     an adjacent comment telling adopters to replace the placeholder — the
+     guard must be real YAML, not a comment;
    - steps: checkout (fetch-depth 0 comment on why not needed → depth 1 fine;
      document) → action `mode: fix` with `github-token:
      ${{ secrets.GITHUB_TOKEN }}`; commented variant using a PAT for
@@ -46,9 +48,13 @@ deliverable with acceptance criteria, not ad-hoc README snippets.
      `actions/upload-artifact` of the evidence dir with a comment warning about
      screenshots of authenticated/sensitive pages (T7) and the
      `containsSensitiveInput` manifest flag.
-4. Every template: pinned action versions (`@v4` etc. current at
-   implementation), no `pull_request_target` anywhere, `concurrency` group to
-   prevent overlapping runs, timeout-minutes set (15/30/30).
+4. Every template is a complete, runnable workflow: `name`, triggers,
+   workflow-level `permissions`, `concurrency` group, and a single job with
+   `runs-on: ubuntu-latest` (Linux required for
+   `npx playwright install --with-deps chromium` in audit.yml),
+   `timeout-minutes` (15/30/30), pinned action versions (`actions/checkout@v4`
+   etc., current at implementation), and NO `pull_request_target` in any
+   template file.
 5. `docs/guides/workflows.md`: table of the three templates (purpose,
    permissions, secrets exposure), fork-PR rules in a highlighted section
    ("Never run fix or LLM modes on pull_request_target; check mode is safe on
@@ -62,8 +68,10 @@ deliverable with acceptance criteria, not ad-hoc README snippets.
 ## Acceptance Criteria
 
 - [ ] Three templates present, YAML-valid in CI, versions pinned, permission
-      blocks exactly as specified.
-- [ ] `grep -r pull_request_target examples/ docs/guides` → no hits (CI check).
+      blocks exactly as specified, complete job structure per requirement 4.
+- [ ] `examples/` (workflow FILES) contain no `pull_request_target` — CI check
+      with a failing grep; the prose guide MAY name it in its prohibition text
+      (that is the point of the doc).
 - [ ] Guide covers: permissions matrix, fork rules, LLM secret setup, SARIF
       option, artifact warning — reviewed against DESIGN §14.2 T3/T4/T5/T7
       checklist (checklist included in PR description).
@@ -73,8 +81,9 @@ deliverable with acceptance criteria, not ad-hoc README snippets.
 ## Validation
 
 ```bash
-npm test -- workflows   # yaml validation test
-grep -r pull_request_target examples/ docs/guides && exit 1 || true
+npm test -- workflows            # yaml validation test
+! grep -rn pull_request_target examples/
+grep -q "pull_request_target" docs/guides/workflows.md   # prohibition documented
 ```
 
 ## Dependencies

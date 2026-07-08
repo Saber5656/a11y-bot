@@ -18,32 +18,44 @@ extraction happens in issue 33.
 ## Scope
 
 - `src/llm/client.ts` (interface + factory), `src/llm/providers/openai-compatible.ts`,
-  `src/llm/budget.ts`.
+  `src/llm/budget.ts`. (`llm.capabilities` already exists in the schema —
+  issue 02 implements all §6.2 keys; this issue consumes it.)
+- Budget summary: `budget.getSummary()` returns `{ calls, inputTokens,
+  outputTokens, rejectedOutputs }`; commands merge it into the report envelope
+  as `run.llm` (optional field defined by issue 09's envelope schema).
 
 ## Detailed Requirements
 
 1. Interface exactly per DESIGN §10.1 (`capabilities()`, `complete()` with
    `TextPart | ImagePart`, optional `jsonSchema`, `maxOutputTokens`).
-2. Factory `createLlmClient(config, env): LlmClient | null`:
+2. Factory `createLlmClient(config, env, opts: { enabled: boolean }):
+   LlmClient | null`:
+   - `opts.enabled` is the EXPLICIT feature gate (DESIGN §14.3: LLM off unless
+     key AND explicit config/flag) — callers pass `fix.llm`/`--llm` (fix path)
+     or the audit analyst enablement; `enabled: false` → null regardless of key.
    - returns `null` when no key present in `env[config.llm.apiKeyEnv]` (fallback
      `OPENAI_API_KEY`) — callers treat null as "feature disabled", logging one
      info line per feature (`skipped (no LLM key)`).
    - never throws for missing key; throws ConfigError for malformed baseUrl.
 3. OpenAI-compatible provider:
    - POST `{baseUrl}/chat/completions`; payload: model, temperature 0,
-     `max_tokens` (or `max_completion_tokens` — send whichever the endpoint
-     accepts; implement primary + one retry with the alternate field name on a
-     400 naming that field), messages with image parts as
-     `{ type: "image_url", image_url: { url: "data:image/png;base64,…" } }`.
+     **primary token field `max_tokens`**; if the endpoint responds 400 with an
+     error message naming that field, retry once with
+     `max_completion_tokens` (fallback flagged in result meta). Image parts:
+     `{ type: "image_url", image_url: { url:
+     "data:<mediaType>;base64,<base64>" } }` (mediaType from `ImagePart`).
    - `jsonSchema` given → `response_format: { type: "json_schema", json_schema:
-     { name, schema, strict: true } }`; on 400 for unsupported response_format,
-     retry once with instruction-embedded JSON + local parse (fallback path
-     flagged in result meta).
+     { name: "a11ybot_output", schema, strict: true } }` (fixed name constant);
+     on 400 for unsupported response_format, retry once with
+     instruction-embedded JSON + local parse (fallback path flagged in result
+     meta).
    - Timeout via AbortController (`llm.timeoutMs`); retries: ≤ 2 on 429/5xx with
      exponential backoff (1 s, 4 s) honoring `Retry-After`.
-   - Errors surface as `LlmUnavailable` (feature-level skip + report notice,
-     never crashes the run; EnvError only if user explicitly forced `--llm`
-     AND every call failed — decided at command level, not here).
+   - Errors surface as `LlmUnavailableError` — a module-local class exported
+     from `src/llm/client.ts`, deliberately OUTSIDE the core exit-code taxonomy
+     because features catch it and degrade to skip (never crashes the run;
+     EnvError only if the user explicitly forced `--llm` AND every call failed —
+     decided at command level, not here).
    - `capabilities()`: `{ vision: true, structuredOutput: true }` for the
      default provider, overridable via config `llm.capabilities` (escape hatch
      for non-vision compatible endpoints; U1 verification recorded here: confirm
@@ -58,9 +70,14 @@ extraction happens in issue 33.
 ## Acceptance Criteria
 
 - [ ] Stub-server tests (local HTTP): happy path, json_schema path + fallback
-      path, 429 retry, timeout abort, 500→LlmUnavailable, image part encoding.
-- [ ] No-key mode returns null client; feature-skip logging verified in 20/28
-      (here: unit test on factory).
+      path, `max_tokens`→`max_completion_tokens` 400-fallback path, 429 retry
+      honoring `Retry-After` (delay asserted with fake timers), timeout abort,
+      500→LlmUnavailableError, image part encoding per mediaType.
+- [ ] Gating matrix tested: (enabled,key) = (false,set)→null, (true,unset)→null,
+      (true,set)→client, (false,unset)→null.
+- [ ] Capabilities override consumed correctly: `{ vision: false }` config
+      makes `capabilities().vision === false` regardless of provider defaults.
+- [ ] `getSummary()` totals verified across multiple calls.
 - [ ] Budget exhaustion test: maxCalls=2, third call skipped.
 - [ ] Redaction test: forced error containing the key string logs `***`.
 - [ ] Zero LLM dependencies added to package.json (fetch only).

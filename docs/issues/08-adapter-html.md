@@ -24,13 +24,22 @@ fixes the exact extra set.
 
 1. Profile fragment: files `**/*.html`, parser `@html-eslint/parser`, plugin
    `@html-eslint`.
-2. Enabled rules = the 17 Accessibility-category rules (research doc list) +
-   extras `require-lang`, `require-title` (verify exact rule ids against the
-   pinned plugin version; if an extra does not exist under that id, document the
-   actual id in the rule map and update DESIGN.md §8.1 in the same PR).
-3. Rule map rows for every **enabled** rule (this adapter's completeness test
-   iterates the enabled set, not the whole plugin — the plugin's style/SEO rules
-   stay out of scope). Normative fixability:
+2. Enabled rules = the 17 Accessibility-category rules — `no-abstract-roles`,
+   `no-accesskey-attrs`, `no-aria-hidden-body`, `no-aria-hidden-on-focusable`,
+   `no-empty-headings`, `no-heading-inside-button`, `no-invalid-role`,
+   `no-non-scalable-viewport`, `no-positive-tabindex`, `no-redundant-role`,
+   `no-skip-heading-levels`, `require-content`, `require-form-method`,
+   `require-frame-title`, `require-img-alt`, `require-input-label`,
+   `require-meta-viewport` — plus extras `require-lang`, `require-title`
+   (verify exact rule ids against the pinned plugin version; if an extra does
+   not exist under that id, document the actual id in the rule map and update
+   DESIGN.md §8.1 in the same PR).
+3. Rule map rows for every **enabled** rule, using the shared `RuleMapRow` type
+   from issue 05 (incl. `docsUrl` per row). Scope note: per DESIGN §8.2, this
+   adapter's exhaustiveness is defined over the enabled a11y set — the
+   completeness test iterates the enabled set and additionally asserts each
+   enabled rule id exists in the installed plugin (typo guard). The plugin's
+   style/SEO categories stay out of scope. Normative fixability:
    | upstream rule | fixability |
    |---|---|
    | `no-redundant-role` | auto_safe |
@@ -38,7 +47,7 @@ fixes the exact extra set.
    | `no-accesskey-attrs` | auto_safe |
    | `no-positive-tabindex` | auto_review |
    | `no-abstract-roles`, `no-invalid-role` | auto_review (remove role attr) |
-   | `require-lang` | auto_safe (config-gated on `fix.defaults.lang`, flag as in issue 06) |
+   | `require-lang` | auto_safe with `configGated: "fix.defaults.lang"` (DESIGN §7.2) |
    | `require-img-alt` | content_required |
    | `require-frame-title` | content_required |
    | `require-input-label` | content_required |
@@ -52,11 +61,19 @@ fixes the exact extra set.
 
 ## Acceptance Criteria
 
-- [ ] Completeness test over the enabled rule set green (+ negative test).
+- [ ] Completeness test over the enabled rule set green; negative tests: a map
+      row for a nonexistent plugin rule id fails, and deleting a row for an
+      enabled rule fails.
 - [ ] Fixture HTML pages produce expected findings (≥ 8 rules incl.
       require-img-alt, no-positive-tabindex, no-invalid-role, require-lang).
 - [ ] Extra-rule ids verified against the pinned plugin (test imports the rule
       objects directly — a typo fails at test time, not runtime).
+- [ ] Registry sweep: every row has `docsUrl` and full metadata; provenance
+      `source = { tool: "@html-eslint/eslint-plugin", version, ruleId }`.
+- [ ] `scan.rules` override tested for one HTML rule.
+- [ ] T12 integration: hostile fixture (1 MiB+ single-line HTML) is skipped by
+      discovery; a synthetic parser hang is terminated by the issue-05 worker
+      timeout (shared harness test).
 - [ ] All messageIds resolve in the catalog.
 
 ## Validation
@@ -75,4 +92,5 @@ HTML fixers (14); style/SEO categories; markuplint evaluation (v2).
 
 ## Design References
 
-DESIGN.md §8.1–8.3; research/2026-07-static-lint-engines.md.
+DESIGN.md §7.1–7.4 (finding/registry/severity), §8.1–8.3, §14.2 T12;
+research/2026-07-static-lint-engines.md.

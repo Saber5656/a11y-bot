@@ -26,7 +26,10 @@ Option **(b)** for v1:
 - Reproducibility: identical page → identical evidence; only the advisory layer is
   model-dependent, and it cannot fail CI.
 - Cost/wall-clock bounded by probe design, not by agent exploration.
-- No action-safety sandbox needed (no destructive clicks possible by design).
+- No LLM action-safety sandbox needed: the model never chooses browser actions.
+  State-changing steps exist only in user-authored flows executed verbatim
+  against user-configured targets (threat row T13 in DESIGN §14.2 governs that
+  residual risk; docs steer flows to non-production targets).
 
 ## Consequences
 

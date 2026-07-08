@@ -12,10 +12,10 @@ HTML / JSX-TSX (React) / Vue SFC, instead of reimplementing dozens of a11y rules
 
 | Package | Version | License | ESLint peer range | Notes |
 |---|---|---|---|---|
-| `eslint` | 10.6.0 (latest) | MIT | — | Flat config only since v9 |
+| `eslint` | 10.6.0 (latest; latest 9.x = 9.39.4) | MIT | — | Flat config only since v9 |
 | `eslint-plugin-jsx-a11y` | 6.10.2 | MIT | `^3 … ^9` (**no ^10**) | ~35 rules, industry standard for JSX |
 | `eslint-plugin-vuejs-accessibility` | 2.5.0 | MIT | `^5 … ^10` | ~21 rules for Vue SFC templates |
-| `vue-eslint-parser` | 4.12.1 (checked) | MIT | `^8.57 / ^9 / ^10` | Required to parse `.vue` |
+| `vue-eslint-parser` | 10.4.1 | MIT | `^8.57 / ^9 / ^10` | Required to parse `.vue` |
 | `@html-eslint/eslint-plugin` | 0.63.0 | MIT | `>=8.0.0 \|\| ^10.0.0-0` | Has a dedicated **Accessibility** rule category |
 | `@html-eslint/parser` | (paired) | MIT | — | Parses plain `.html` for ESLint |
 | `markuplint` | 4.18.3 | MIT | n/a (own engine) | Alternative HTML linter, own CLI/engine |

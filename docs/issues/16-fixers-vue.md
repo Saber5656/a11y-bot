@@ -11,15 +11,20 @@ AST spans.
 ## Context
 
 Vue templates are HTML-like but attributes may be directive-bound
-(`:alt="expr"`, `v-bind:tabindex`). Same skip discipline as JSX (issue 15):
-only static-attribute cases are edited in v1. Known unknown U5 (ESLint autofix
+(`:alt="expr"`, `v-bind:tabindex`). Editing discipline (normative): attribute
+VALUES are edited only in static-attribute form; attribute-NAME renames
+(fixer 5) also apply to the bound form because the rename never touches the
+value expression; removal fixers act on the static form only in Vue (bound
+attributes may be conditionally meaningful). Known unknown U5 (ESLint autofix
 quality in `.vue`) is resolved here by NOT using upstream autofixes at all —
 all edits are our own attribute-level text edits computed from template AST
-offsets (SFC-absolute).
+offsets (SFC-absolute). Rule ids below are shorthand for
+`static/vuejs-a11y/<rule>`.
 
 ## Scope
 
-- `src/fix/fixers/vue/*.ts` + golden fixtures.
+- `src/fix/fixers/vue/*.ts`, registration entries in `src/fix/catalog.ts`,
+  `fix.note` catalog messages, golden fixtures under `fixtures/fixers/vue/`.
 
 ## Detailed Requirements
 
@@ -31,7 +36,7 @@ Normative fixer set:
 | 2 | `no-redundant-roles` | auto_safe | remove redundant static `role` |
 | 3 | `no-autofocus` | auto_review | remove static `autofocus` |
 | 4 | `tabindex-no-positive` | auto_review | static `tabindex="3"` → `tabindex="0"`; bound `:tabindex` → null |
-| 5 | `aria-props` | auto_review | rename misspelled static `aria-*` (shared ARIA list from issue 15); bound form `:aria-*` → rename attribute name only (value expression untouched) |
+| 5 | `aria-props` | auto_review | rename misspelled `aria-*` to the unique nearest valid name — same algorithm as issue 15: Levenshtein distance ≤ 2 against the shared vendored ARIA list, no unique candidate → null; bound form `:aria-*`/`v-bind:aria-*` → rename the attribute NAME only (value expression untouched) |
 
 Shared requirements:
 
@@ -50,8 +55,13 @@ Shared requirements:
 ## Acceptance Criteria
 
 - [ ] All 5 fixers registered; golden tests byte-exact; verify loop green.
-- [ ] Bound/spread skip discipline tested for every fixer.
-- [ ] `:aria-lable="x"` → `:aria-label="x"` rename covered.
+- [ ] Bound/spread skip discipline tested for every fixer (value edits and
+      removals skip bound forms; name-rename covers bound forms).
+- [ ] `:aria-lable="x"` → `:aria-label="x"` rename covered; ambiguous typo →
+      null.
+- [ ] Class policy: auto_review fixers inert under default `fix.classes`.
+- [ ] Security (DESIGN §14.2 T2): mutated-fixer negative tests through the
+      engine validators (out-of-span, active-content newText).
 - [ ] Script blocks and non-template SFC sections byte-identical post-fix.
 - [ ] Idempotence double-run test.
 - [ ] U5 resolution note added to DESIGN.md §2.3 (row updated: "resolved — own
@@ -74,4 +84,5 @@ restructuring.
 
 ## Design References
 
-DESIGN.md §9.3, §2.3 U5; issue 07 fixability table.
+DESIGN.md §9.1–9.3, §2.3 U5, §14.2 T2; issue 07 fixability table; issue 15
+(shared ARIA list + rename algorithm).

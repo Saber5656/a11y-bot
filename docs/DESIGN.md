@@ -91,8 +91,9 @@ scheduled-scan→fix-PR write path, read-only PR checks (ADR-006); TS/Node 22 st
 - JIS X 8341-3: revision to an identical standard of ISO/IEC 40500:2025 is in
   progress (draft target ~2026-05). Docs ship a correspondence note; see
   [research](./research/2026-07-standards-wcag-jis.md).
-- `--level A|AA` filters gate severity; findings above the chosen level are still
-  reported as informational.
+- Per-rule level metadata surfaces in all reports so users can filter by
+  conformance level downstream; a dedicated `--level` gate flag is deferred to
+  v2 (gating in v1 is severity-based via `report.failOn`).
 
 ---
 
@@ -137,7 +138,8 @@ a11y-bot/
 ├─ action.yml                  # GitHub Action manifest (issue 31)
 ├─ action/                     # Action entry (bundled to dist/action)
 ├─ src/
-│  ├─ cli/                     # commander wiring: index.ts, commands/{init,scan,fix,audit}.ts
+│  ├─ cli/                     # commander wiring: index.ts,
+│  │                           # commands/{init,scan,fix,fix-pr,audit}.ts
 │  ├─ config/                  # schema.ts (zod), load.ts, init.ts
 │  ├─ core/                    # findings.ts, registry.ts, fingerprint.ts, messages/,
 │  │                           # errors.ts, exit-codes.ts, logger.ts, run-context.ts
@@ -153,7 +155,7 @@ a11y-bot/
 │  ├─ report/                  # console.ts, json.ts, markdown.ts, sarif.ts, baseline.ts
 │  └─ github/                  # git.ts, pr.ts, identity.ts
 ├─ schemas/                    # generated JSON Schemas (config, findings, evidence, flows)
-├─ fixtures/                   # test fixture projects (issue 35)
+├─ fixtures/                   # test fixture projects (issue 34)
 ├─ examples/workflows/         # pr-check.yml, scheduled-fix.yml, audit.yml (issue 32)
 └─ docs/                       # this design, ADRs, research, issues
 ```
@@ -192,12 +194,16 @@ baseline:
   file: .a11ybot/baseline.json
 audit:
   targets: []                       # see 6.3
-  viewports:
+  viewports:                        # name: ^[a-z0-9-]{1,20}$ (evidence path component)
     - { width: 1280, height: 800, name: desktop }
     - { width: 375,  height: 812, name: mobile }
   probes: [axe, focus-order, keyboard-reach, reflow, target-size, structure]
-  flows: []                         # see 11.5
+  flows: []                         # see 11.5; flows[].viewport must reference
+                                    # a viewports[].name (default: first viewport)
+  includeIncomplete: false          # axe "incomplete" results as advisory findings
+  llmAnalysis: false                # explicit enable for the LLM UX analyst (§10.3)
   evidenceDir: .a11ybot/evidence
+  keepRuns: 3                       # retention; 0 = keep all
   scrubParams: [token, key, session, auth]   # query params masked in evidence
   pageTimeoutMs: 30000
   maxScreenshots: 40                # per run
@@ -207,6 +213,8 @@ llm:
   model: gpt-5.4-mini
   apiKeyEnv: A11YBOT_LLM_API_KEY    # name of env var holding the key
                                     # fallback env: OPENAI_API_KEY
+  capabilities: null                # null = provider-declared; or override:
+                                    # { vision: false } for non-vision endpoints
   maxCalls: 20                      # per run
   maxOutputTokens: 2000             # per call
   timeoutMs: 60000
@@ -215,9 +223,14 @@ report:
   outputDir: .a11ybot/reports
   failOn: serious                   # minimum severity of NEW findings that fails CI
 github:
-  branchPrefix: a11y-bot/
+  branchPrefix: a11y-bot/           # MUST match ^a11y-bot\/ (schema-enforced);
+                                    # customization like a11y-bot/team-x- is allowed
   labels: [accessibility]
   prTitle: "fix(a11y): automated accessibility fixes"
+  closeEmptyPr: true                # close the bot PR when no diff remains
+  commitIdentity:                   # optional override of the bot git identity
+    name: a11y-bot
+    email: a11y-bot[bot]@users.noreply.github.com
 ```
 
 ### 6.3 `audit.targets[]` variants (discriminated union)
@@ -225,6 +238,8 @@ github:
 ```yaml
 - name: prod-home            # required, unique, [a-z0-9-]{1,40}
   url: https://example.com/  # variant A: audit a reachable URL as-is
+                             #   optional readyTimeoutMs (default 60000);
+                             #   readiness = GET 2xx/3xx
 - name: built
   staticDir: dist/           # variant B: serve directory on an ephemeral port
   spaFallback: true          #   index.html fallback for SPA routers
@@ -276,7 +291,12 @@ interface Finding {
   evidenceRefs?: string[];      // paths inside evidence bundle
   fixability: Fixability;
   source: { tool: string; version: string; ruleId: string }; // upstream provenance
-  advisory?: true;              // ux engine only; never affects exit code
+  advisory?: true;              // never affects exit code. Always set on ux
+                                // findings; runtime findings may set it for
+                                // non-normative observations (axe "incomplete",
+                                // focus-order-jump, probe-timeout)
+  confidence?: number;          // 0..1, ux engine only (analyst output)
+  baselineStatus?: "new" | "known";   // annotated by the baseline layer (§12.2)
 }
 
 interface WcagRef { sc: string; level: "A" | "AA"; version: "2.0" | "2.1" | "2.2"; }
@@ -290,8 +310,16 @@ interface WcagRef { sc: string; level: "A" | "AA"; version: "2.0" | "2.1" | "2.2
 `runtime/probe/focus-visible`, `ux/llm/navigation`.
 
 The **rule registry** (`src/core/registry.ts`) is the single map from unified id →
-`{ wcag, defaultSeverity, fixability, messageId, docsUrl }`. Adapters must fail a
-CI completeness test if an upstream rule lacks a registry entry (see issues 06–08).
+`{ wcag, defaultSeverity, fixability, messageId, docsUrl, enabled, configGated? }`
+(`configGated` names a config path — e.g. `fix.defaults.lang` — that must be set
+for an `auto_safe` fixer to activate; `enabled: false` rows exist for upstream
+rules we map but do not run). Adapters must fail a CI completeness test if an
+upstream rule lacks a registry entry (see issues 06–08).
+
+Exception — **dynamic namespaces**: rule sets defined by an external engine at
+finding time (`runtime/axe/*`, `ux/llm/*`) register a namespace template entry
+instead of per-rule rows; for these, severity and WCAG refs are required inputs
+on each finding (validated at construction) rather than registry constants.
 
 ### 7.3 Fingerprint (stable across line drift)
 
@@ -316,7 +344,7 @@ fingerprint = sha256(
 | axe impact | critical→critical, serious→serious, moderate→moderate, minor→minor |
 | ESLint plugins | per-rule assignment in registry (default serious for WCAG A failures, moderate for AA, minor for best-practice) |
 | probes | fixed per probe (registry) |
-| ux/llm | advisory only; severity is informational |
+| ux/llm | always `advisory: true`; severityHint mapped onto the standard enum for display only (§10.3), never gates |
 
 ---
 
@@ -341,9 +369,11 @@ fingerprint = sha256(
 Each adapter converts `ESLint.LintResult[]` → `Finding[]`:
 resolve unified rule id via rule map, attach WCAG refs/severity/fixability from
 registry, compute fingerprint, resolve message from catalog (fallback: upstream
-message), capture snippet from source text. Rule maps are **exhaustive tables**
-(one row per upstream rule, even if mapped to `severity: off` by default) validated
-by the completeness test.
+message), capture snippet from source text. Rule maps are **exhaustive tables
+over the adapter's rule scope**, validated by the completeness test. Rule scope:
+for `jsx-a11y` and `vuejs-accessibility`, every rule the plugin exports (rows may
+be `enabled: false`); for `@html-eslint`, the enabled a11y set defined in issue 08
+(the plugin's style/SEO categories are out of scope).
 
 ### 8.3 Config-level rule control
 
@@ -365,14 +395,19 @@ off / minor / keep-registry-severity-but-gate). `warn` findings never fail CI.
 | `none` | Not applicable (runtime/ux findings) | — |
 
 Policy guardrails (normative): the fixer catalog must never (a) insert empty
-`alt=""` as a "fix" (it asserts decorative semantics), (b) delete user content
-nodes, (c) touch code outside the finding's range except for provably tied
-attributes, (d) introduce event handlers, scripts, or URLs.
+`alt=""` as a "fix" — it asserts decorative semantics; the single exception is
+an LLM decorative determination carrying `decorativeConfirmed: true`, which is
+downgraded to class `auto_review` (§10.3) — (b) delete user content nodes,
+(c) touch code outside the finding's range except for provably tied attributes,
+(d) introduce event handlers, scripts, or URLs.
 
 ### 9.2 Pipeline state machine (one file)
 
 ```
+DISCOVERED -> NEEDS_HUMAN  (no fixer may run: fixability manual, or
+                            content_required without LLM availability)
 DISCOVERED -> PLANNED      (fixer exists for ruleId & class allowed)
+PLANNED    -> SKIPPED      (fixer ran, returned null -> fix_skipped w/ note)
 PLANNED    -> APPLIED      (text edits applied to in-memory copy)
 APPLIED    -> VERIFIED     (file re-parsed AND re-linted: target finding gone,
                             no NEW findings introduced in that file)
@@ -380,6 +415,9 @@ APPLIED    -> ROLLED_BACK  (verification failed -> file restored, finding
                             reported as fix_failed with reason)
 VERIFIED   -> COMMITTED    (written to worktree; enters commit grouping)
 ```
+
+Result states exposed to reporters: `fixed | fix_skipped | fix_deferred |
+fix_failed | needs_human`.
 
 Edits are position-based text edits `{ startOffset, endOffset, newText }` computed
 from the ESLint AST/source; overlapping edits in one file are applied in
@@ -408,9 +446,10 @@ issues):
 ### 9.4 `fix` command flow
 
 `a11y-bot fix [paths] [--dry-run] [--llm] [--classes auto_safe,auto_review]`
-scan → plan → apply+verify per file → summary (fixed / failed / deferred /
-needs-human) → non-zero exit only on internal error (fix run "finding nothing to
-fix" is success). `--dry-run` prints unified diff to stdout, writes nothing.
+scan → plan → apply+verify per file → summary (fixed / skipped / deferred /
+failed / needs-human) → non-zero exit only on internal error (fix run "finding
+nothing to fix" is success). `--dry-run` prints unified diff to stdout, writes
+nothing.
 
 ---
 
@@ -425,7 +464,9 @@ interface LlmClient {
   capabilities(): { vision: boolean; structuredOutput: boolean };
   complete(req: {
     system: string;
-    user: Array<TextPart | ImagePart>;   // ImagePart = { pngBase64, maxDim: 1024 }
+    user: Array<TextPart | ImagePart>;
+    // ImagePart = { base64: string;
+    //   mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" }
     jsonSchema?: object;                  // response constrained to schema
     maxOutputTokens: number;
   }): Promise<{ text: string; parsed?: unknown; usage: TokenUsage }>;
@@ -460,8 +501,9 @@ steering the model; model output smuggling active content into patches.
    - resulting file edit must stay within the finding's range; then the standard
      fix verify loop (re-parse + re-lint) must pass.
 4. **Redaction**: prompts never include env, tokens, or absolute paths; image
-   inputs are downscaled (max 1024 px) local files only — remote image URLs are
-   **not fetched** in v1 (finding stays `needs-human`).
+   inputs are **local files only**, size-capped (≤ 1 MiB raster pass-through;
+   no image-processing library in v1 — oversized/unsupported → needs-human);
+   remote image URLs are **not fetched** in v1.
 5. **Marking**: every LLM-generated patch line is listed under an
    "AI-generated (review required)" section of the PR body; commits carry
    `[llm]` in the subject of the group commit.
@@ -469,9 +511,9 @@ steering the model; model output smuggling active content into patches.
 ### 10.3 Features
 
 - **Alt-text fixer** (issue 20): input = image (local file resolved from
-  `src`/import, downscaled) + surrounding markup context; output schema
-  `{ alt: string, decorative: boolean }`; `decorative: true` → propose `alt=""`
-  only as `auto_review` class.
+  `src`/import, size-capped) + surrounding markup context; output schema
+  `{ alt: string, decorative: boolean, confidence: number }`;
+  `decorative: true` → propose `alt=""` only as `auto_review` class.
 - **UX analyst** (issue 28): input = evidence bundle slices (see 11.6); output =
   array (≤ 20) of `{ category: enum, title, description, severityHint, wcagRefs?,
   evidenceRefs[], confidence: 0..1 }`; rendered into the audit Markdown report
@@ -490,7 +532,7 @@ State machine per target: `PENDING → PROVISIONING → READY → AUDITING → D
 |---|---|---|---|
 | `url` | none | HTTP GET 2xx/3xx within timeout | none |
 | `staticDir` | in-process static server on `127.0.0.1:0` (ephemeral), optional SPA fallback | server listening | close server |
-| `command` | spawn via shell in repo root, env passthrough | TCP+HTTP poll `readyPath` on `port` until `readyTimeoutMs` | SIGTERM, SIGKILL after 10 s, kill process group |
+| `command` | spawn via shell in repo root; env passthrough MINUS known secrets (`GITHUB_TOKEN`, `GH_TOKEN`, `OPENAI_API_KEY`, configured `llm.apiKeyEnv` — T14) | TCP+HTTP poll `readyPath` on `port` until `readyTimeoutMs` | SIGTERM, SIGKILL after 10 s, kill process group |
 
 Failures mark the target FAILED (exit code 4 if **all** targets fail; partial
 failure = warning + report entry).
@@ -519,7 +561,16 @@ findings `runtime/axe/<id>` with axe impact mapping (§7.4) and evidence refs
 | `structure` | `runtime/probe/*` for missing title/lang/landmark/h1, heading skips | DOM outline extraction (also stored as evidence for the analyst) |
 
 All probe thresholds are constants in code, documented in the issue, not
-user-configurable in v1 (determinism > flexibility).
+user-configurable in v1 (determinism > flexibility). Focus-visibility deltas
+compare computed-style strings of outline / box-shadow / border-color /
+background-color between focused and unfocused states (string inequality =
+delta).
+
+Operational findings registered alongside the probes:
+`runtime/probe/page-load-failed` (serious, bestPractice),
+`runtime/probe/flow-failed` (moderate, bestPractice),
+`runtime/probe/probe-timeout` (minor, bestPractice, advisory). All
+`fixability: none`.
 
 ### 11.5 Scripted flows (issue 25)
 
@@ -577,7 +628,7 @@ by `init`; CI users upload it as a workflow artifact (templates show how).
 | console | grouped by file/target, severity-colored, summary table |
 | json | `{ schemaVersion, run, findings: Finding[], summary }` — stable contract for tooling |
 | markdown | human report: summary tables, top rules, per-file/target sections; reused as PR body and `GITHUB_STEP_SUMMARY` |
-| sarif | SARIF 2.1.0; severity mapping per research; `partialFingerprints.a11ybotFingerprint/v1` = §7.3 fingerprint |
+| sarif | SARIF 2.1.0; severity mapping per research; `partialFingerprints.a11ybotFingerprint/v1` = §7.3 fingerprint. **Static findings only in v1** (runtime findings lack file locations; runtime SARIF is v2 — see issue 11) |
 
 ### 12.2 Baseline & gating (issue 12)
 
@@ -607,30 +658,39 @@ by `init`; CI users upload it as a workflow artifact (templates show how).
 - Preconditions: clean worktree required (else exit 2 with explanation).
 - Branch: `${github.branchPrefix}fix` (default `a11y-bot/fix`) created from the
   current HEAD; **allowlist guard**: the engine refuses to create/update/force-push
-  any ref not matching `^a11y-bot/`.
-- Commits grouped **by unified rule id**: `fix(a11y): <ruleId summary> (N files)`;
-  LLM-assisted groups suffixed `[llm]`. Bot identity:
-  `a11y-bot <a11y-bot[bot]@users.noreply.github.com>` (configurable).
+  any ref not matching `^a11y-bot/` (consistent by construction: the config
+  schema already restricts `branchPrefix` to that namespace — §6.2).
+- Commits grouped **by unified rule id**, subject template (exact):
+  `fix(a11y): <unified ruleId> (<N> files)`; LLM-assisted groups suffixed
+  ` [llm]`. Bot identity from `github.commitIdentity` (§6.2), default
+  `a11y-bot <a11y-bot[bot]@users.noreply.github.com>`.
 
 ### 13.2 PR engine (issue 30)
 
-- Discovery: open PRs with head `a11y-bot/fix` AND marker `<!-- a11y-bot:fix-pr -->`
-  in body → update path (force-push bot branch, edit body); else create.
+- Discovery: open PRs with head `${github.branchPrefix}fix` AND marker
+  `<!-- a11y-bot:fix-pr -->` in body → update path (force-push bot branch, edit
+  body); no matching marker PR but an open PR on that head branch → **abort**
+  with EnvError (never hijack a human's PR); otherwise create. The
+  `a11y-bot fix-pr` command chains fix → git engine → this engine.
 - Body = Markdown report + fixed/needs-human tables + AI-generated section (§10.2)
   + reproduction command + marker comment.
 - Labels from `github.labels` (created if missing, `--no-create-labels` opt-out).
 - Tokens: `GITHUB_TOKEN`/`GH_TOKEN` env; REST via octokit; no git credential
-  writing — pushes use `https://x-access-token:<token>@github.com/...` transient
-  remote URL, never persisted to git config.
+  writing — pushes authenticate via an **environment-injected** HTTP extra
+  header (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0=http.https://github.com/.extraheader`
+  with a Basic-auth value built from the token), so the token never appears in
+  process arguments, `ps` output, or persisted git config.
 - Rate/abuse: single PR per run; secondary-rate-limit backoff; idempotent re-runs.
 
 ### 13.3 GitHub Action (issue 31) & workflow templates (issue 32)
 
-- `action.yml` (runs: node24 if available at implementation time, else node20 —
-  pin per Actions runtime support at build time; bundled `dist/action/index.js`).
+- `action.yml` (`runs.using: node24` — required; Node 20 is EOL (ADR-007) and
+  the bundle targets Node ≥ 22, so no node20 fallback exists; bundled
+  `dist/action/index.js`).
 - Inputs: `mode` (`check|fix|audit`), `config-path`, `fail-on`, `llm` (bool),
   `github-token`, `update-baseline` (bool). Outputs: `summary-json-path`,
-  `new-findings-count`, `pr-url`.
+  `new-findings-count`, `pr-url`. Mode mapping: `check` → `scan` (report+gate),
+  `fix` → `fix-pr`, `audit` → `audit`.
 - Writes Markdown summary to `GITHUB_STEP_SUMMARY`; uploads nothing itself
   (artifact upload stays in user workflows for transparency).
 - Templates (examples/workflows/): `pr-check.yml` (permissions:
@@ -663,13 +723,15 @@ by `init`; CI users upload it as a workflow artifact (templates show how).
 | T3 | Token leakage | env-only secrets, log redaction (token pattern scrub), no secrets in evidence/reports, transient push URL |
 | T4 | Over-privileged workflows | least-privilege permission blocks in every template; check mode needs `contents: read` only |
 | T5 | Fork-PR secret exposure | explicit template guidance; docs forbid `pull_request_target` with fix/LLM modes |
-| T6 | Ref destruction | branch allowlist `^a11y-bot/` for any force operation; never touches default branch |
+| T6 | Ref destruction | branch-ref allowlist `^a11y-bot/` for any force operation on branches; never touches the default branch. Sole exception: the release workflow (§18, issue 36) moves the `v1` major TAG on releases — documented, tag-protection recommended |
 | T7 | Evidence exfiltration of secrets on pages | `scrubParams`, gitignored evidence dir, docs warn about authenticated-page screenshots |
 | T8 | Cost abuse / runaway LLM spend | per-run call/token caps, timeouts; LLM disabled by default |
 | T9 | SSRF-style scanning of internal hosts | v1 audits only explicitly configured targets; no crawling; URL targets logged in report header |
 | T10 | Supply chain (our deps / our publish) | committed lockfile, `npm ci` in CI, pinned action versions in templates, npm provenance publish, 2FA note in release docs |
 | T11 | Path traversal via findings/evidence names | target/flow names constrained to `[a-z0-9-]`; evidence paths built from validated components only |
 | T12 | ReDoS/parser DoS on huge/hostile files | 1 MiB per-file cap, `scan.maxFiles`, lint worker timeout |
+| T13 | State-changing flow steps (click/fill) against live targets | flows are user-authored trusted config executing verbatim (no LLM-chosen actions — ADR-005); same-origin enforcement; docs direct flows at staticDir/dev targets, not production; templates default to built outputs |
+| T14 | Secret env propagation to `audit.targets[].command` child processes | provisioner strips `GITHUB_TOKEN`, `GH_TOKEN`, `OPENAI_API_KEY`, and the configured `llm.apiKeyEnv` from the child env by default (dev servers don't need them); captured output passes the log redaction filter |
 
 ### 14.3 Secure defaults
 
@@ -682,7 +744,8 @@ workflows read-only; no telemetry of any kind; evidence local-only.
 
 - Error taxonomy (`src/core/errors.ts`): `ConfigError` (exit 2), `EnvError`
   (exit 4), `InternalError` (exit 3); every CLI command wraps top-level with a
-  single formatter (message, hint, docs link; stack only with `A11YBOT_LOG=debug`).
+  single formatter (message, hint, docs link; stack only at debug level —
+  `--verbose` and `A11YBOT_LOG=debug` are synonyms).
 - Partial-failure policy: scan continues past per-file parse errors (finding
   `static/bot/parse-error`, severity minor, non-gating by default); audit
   continues past per-target failures; fix rolls back per file.

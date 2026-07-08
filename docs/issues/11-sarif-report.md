@@ -22,16 +22,21 @@ findings have no file location — they are excluded from SARIF (documented).
 
 1. Structure: single `run`; `tool.driver = { name: "a11y-bot", version,
    informationUri, rules: ReportingDescriptor[] }` where rules are the distinct
-   ruleIds present (id = unified ruleId; `helpUri` = registry docsUrl;
+   ruleIds among the **emitted results** (excluded runtime/ux findings produce
+   no descriptor); id = unified ruleId; `helpUri` = registry docsUrl;
    `shortDescription` from catalog; `properties.tags` include `accessibility`
-   and `external/wcag/<sc>` per WCAG ref).
+   and `external/wcag/<sc>` per WCAG ref.
 2. Results: only findings with `file` (static engine). `level` mapping:
    critical|serious → `error`, moderate → `warning`, minor → `note`.
    `partialFingerprints: { "a11ybotFingerprint/v1": finding.fingerprint }`.
-   Region uses 1-based start/end line/column from `range`.
-3. `originalUriBaseIds`: emit `SRCROOT` and relative `artifactLocation.uri`
-   (POSIX) + `uriBaseId: "SRCROOT"` so alerts anchor correctly regardless of
-   checkout path.
+   Region uses 1-based start/end line/column from `range`; findings without a
+   `range` emit the result WITHOUT a `region` (valid SARIF; documented).
+   When baseline data is present (issue 12), each result carries
+   `properties.baselineStatus: "new" | "known"`.
+3. `originalUriBaseIds`: emit
+   `{ SRCROOT: { description: { text: "repository root" } } }` (no `uri` —
+   GitHub resolves relative URIs against the checkout root); every
+   `artifactLocation` uses a POSIX relative `uri` + `uriBaseId: "SRCROOT"`.
 4. Advisory/ux findings and runtime findings: excluded; exporter logs an info
    line with the excluded count (visible in CI logs).
 5. Output validated in tests against the official SARIF 2.1.0 JSON Schema
@@ -44,12 +49,18 @@ findings have no file location — they are excluded from SARIF (documented).
 ## Acceptance Criteria
 
 - [ ] Generated SARIF validates against the vendored schema in CI.
-- [ ] Severity→level and fingerprint mapping unit-tested.
+- [ ] Severity→level, fingerprint, no-range, and baselineStatus-property
+      mappings unit-tested.
 - [ ] Fixture scan produces SARIF with correct relative URIs and rule metadata
       (snapshot).
-- [ ] In this repo's CI, a one-off job uploads fixture SARIF via
-      `github/codeql-action/upload-sarif` and succeeds (smoke; may be marked
-      `continue-on-error: false` and run only on main pushes).
+- [ ] SARIF upload smoke workflow
+      (`.github/workflows/sarif-smoke.yml`, trigger: `pull_request` +
+      push to main, permissions `security-events: write`, `contents: read`)
+      uploads fixture SARIF via `github/codeql-action/upload-sarif` and is
+      green on the PR that closes this issue.
+- [ ] Security (DESIGN §14.2 T3): env-canary test — with token-shaped env
+      values set, generated SARIF contains no canary value anywhere (byte
+      scan); snippet fields are the sanitized §7.1 snippets only.
 - [ ] U3 verification note recorded (code comment + DESIGN §2.3 row updated).
 
 ## Validation
@@ -58,6 +69,7 @@ findings have no file location — they are excluded from SARIF (documented).
 npm test -- src/report/sarif
 node dist/cli/index.js scan fixtures/static-html --format sarif --output .a11ybot/reports
 npx ajv validate -s fixtures/schemas/sarif-2.1.0.json -d .a11ybot/reports/scan.sarif
+# CI: .github/workflows/sarif-smoke.yml green on this issue's PR
 ```
 
 ## Dependencies

@@ -22,10 +22,10 @@ upload, human debugging) — ADR-005's abstraction boundary.
 ## Detailed Requirements
 
 1. Layout exactly per DESIGN §11.6 under
-   `<audit.evidenceDir>/<runId>/`; all path components validated
-   (`targets/<name>/<viewport>/…`, names already constrained by config schema;
-   screenshot names generated internally — assert `^[a-z0-9-]+(\.png|\.json)$`,
-   §14.2 T11).
+   `<audit.evidenceDir>/<runId>/`; all path components validated: target names
+   and viewport names are schema-constrained (issue 02: `^[a-z0-9-]{1,40}$` /
+   `^[a-z0-9-]{1,20}$`), and every sink-relative path must match
+   `^[a-z0-9/._-]+\.(json|png)$` with no `..` segments (assert; §14.2 T11).
 2. `manifest.json`:
    ```json
    { "schemaVersion": 1, "runId": "…", "tool": { "name": "a11y-bot",
@@ -39,37 +39,51 @@ upload, human debugging) — ADR-005's abstraction boundary.
      "truncated": false }
    ```
    JSON Schema committed + staleness-checked like other schemas.
-3. Scrubbing (applies at write time to every JSON string field and file name):
-   query-param values whose key case-insensitively matches any
-   `audit.scrubParams` entry → `***` (URL-parse based, not regex on whole
-   string); the same scrub applies to console/message/request-URL records from
-   the session taps.
-4. Caps: total screenshots ≤ `audit.maxScreenshots` (writer returns
-   `skipped: true` beyond; manifest `truncated: true` + count of skipped);
-   single JSON file ≤ 2 MiB (truncate arrays with marker); whole-bundle soft
-   cap 100 MiB → warning log (known unknown U7: record the practical Action
-   artifact limit in code comment + DESIGN §2.3 update in this PR).
-5. Reader API for 28/10: `loadManifest(dir)`, `loadTargetEvidence(dir, target,
-   viewport)` returning typed structures; tolerant of missing optional files
-   (probe skipped) but strict on manifest schema.
-6. Retention/cleanup: `a11y-bot audit` keeps the last 3 runs under evidenceDir
-   (delete older, oldest-first; disabled via `audit.keepRuns: 0` meaning
-   keep-all — ADD `keepRuns` (int ≥ 0, default 3) to schema + DESIGN §6.2 in
-   this PR).
+3. Scrubbing (applies at write time to EVERY JSON string field recursively and
+   to file names): URL-shaped strings are URL-parsed and query-param values
+   whose key case-insensitively matches any `audit.scrubParams` entry → `***`;
+   this covers page URLs, console/message/request-URL records, DOM-derived
+   snippets and outline text fields (any string containing a `?key=` pair is
+   scrub-checked even outside a full URL).
+4. Caps: total screenshots ≤ `audit.maxScreenshots` (`writeScreenshot` returns
+   null beyond; manifest `truncated: true` + count of skipped); single JSON
+   file ≤ 2 MiB — oversized arrays are truncated from the tail and a final
+   element `{ "__truncated": true, "omitted": <n> }` is appended (applies to
+   any array field; non-array overflow → InternalError); whole-bundle soft cap
+   100 MiB → warning log.
+5. Reader API for 28/10: `loadManifest(dir)` and `loadTargetEvidence(dir,
+   target, viewport)` returning
+   `{ axe?, outline?, focusOrder?, probes?, console?, flows: Record<string,
+   { summary, steps }> }` — each field typed via zod schemas mirroring the
+   `schemas/` files; a missing optional file → `undefined` field; malformed
+   present file → InternalError; manifest schema violations → InternalError.
+6. Retention: export `pruneOldRuns(evidenceDir, keepRuns)` — deletes oldest
+   run directories beyond `audit.keepRuns` (0 = keep all; key exists in the
+   schema from issue 02). The audit command (issue 27) CALLS this after a
+   successful run — no command wiring here.
 7. Nothing in the bundle is ever written outside `evidenceDir` (assert in
-   writer; test with hostile-ish names is moot given generation-side
-   constraints — still test the assertion).
+   writer; test the assertion). U7 closure: verify the current GitHub Actions
+   artifact size limits from official docs during implementation and record
+   the number + source URL in a code comment AND update the DESIGN §2.3 U7
+   row (acceptance-checked).
 
 ## Acceptance Criteria
 
 - [ ] Full audit fixture run produces the exact layout; manifest validates
       against schema; staleness check in CI.
 - [ ] Scrub tests: `?token=abc&page=2` → `?token=***&page=2` in page URLs,
-      console records, and flow step JSONs.
-- [ ] Cap tests: screenshot cap honored + manifest truncated flag; JSON
-      truncation marker present.
-- [ ] Reader round-trip typed-load test; missing probe file tolerated.
-- [ ] Retention: 4th run deletes the oldest; `keepRuns: 0` keeps all.
+      console records, flow step JSONs, AND outline.json DOM-derived text.
+- [ ] Cap tests: screenshot cap honored + manifest truncated flag; JSON array
+      truncation marker `{ "__truncated": true, "omitted": n }` present.
+- [ ] Reader round-trip typed-load test; missing probe file tolerated;
+      malformed manifest → InternalError.
+- [ ] Retention: `pruneOldRuns` deletes oldest beyond keepRuns; `keepRuns: 0`
+      keeps all (function-level tests; command wiring tested in 27).
+- [ ] Security (T7/T11): write-outside-dir assertion test; default evidenceDir
+      lives under `.a11ybot/` which issue 02's `init` gitignores (test asserts
+      the default path prefix); `containsSensitiveInput` flag from
+      `markFlowSensitive` lands in the manifest.
+- [ ] U7: DESIGN §2.3 row updated with the verified artifact limit + source.
 
 ## Validation
 

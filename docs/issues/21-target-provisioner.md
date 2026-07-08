@@ -21,11 +21,16 @@ sandboxed.
 ## Detailed Requirements
 
 1. API: `provisionTargets(config, logger): Promise<ProvisionedTarget[]>` where
-   `ProvisionedTarget = { name, baseUrl, teardown(): Promise<void>, state }`;
-   plus `teardownAll()` that never throws (logs failures).
+   `ProvisionedTarget = { name, baseUrl, teardown(): Promise<void>,
+   state: TargetState }` and `TargetState = "PENDING" | "PROVISIONING" |
+   "READY" | "AUDITING" | "DONE" | "FAILED" | "TORN_DOWN"` — exactly the
+   DESIGN §11.1 machine; the provisioner sets PENDING→PROVISIONING→READY|FAILED
+   and TORN_DOWN; the audit command (27) advances READY→AUDITING→DONE.
+   Plus `teardownAll()` that never throws (logs failures).
 2. `url` variant: readiness = GET (redirects followed ≤ 5, HTTPS/HTTP only —
    other schemes → ConfigError at load already; double-check here) returning
-   < 500 within `readyTimeoutMs` (default 60 s, poll 1 s). No teardown.
+   **2xx/3xx** within the variant's `readyTimeoutMs` (schema default 60000,
+   DESIGN §6.3; poll 1 s). No teardown.
 3. `staticDir` variant:
    - in-process HTTP server bound to `127.0.0.1:0` (ephemeral port), serving the
      directory resolved against repo root; refuse (ConfigError) if the resolved
@@ -58,6 +63,10 @@ sandboxed.
 - [ ] Occupied-port failure for command variant tested.
 - [ ] Ready-timeout produces FAILED with last-output excerpt; zombie-free
       (`ps` check in test on POSIX).
+- [ ] Security (DESIGN §14.2 T3): captured command stdout/stderr passes through
+      the issue-04 logger redaction — a fixture command echoing a planted
+      `GITHUB_TOKEN` value shows `***` in the failure excerpt.
+- [ ] `url` readiness: 404 response does NOT become READY (2xx/3xx only).
 - [ ] SIGINT during provisioning tears down children (manual test documented +
       automated where feasible).
 

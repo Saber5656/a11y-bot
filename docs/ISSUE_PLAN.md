@@ -70,8 +70,12 @@ unknowns, which must be filed as new issues referencing the unknown they resolve
 | 5 | GitHub integration | 29–32 | Scheduled workflow on a sandbox repo opens/updates the fix PR end-to-end |
 | 6 | Providers, E2E, security, release | 33–36 | `1.0.0` published with provenance; E2E suite green; security docs complete |
 
-Waves 2/3 and 4 can proceed in parallel after wave 1 (disjoint modules). Wave 5
-requires 17 (fix output) but not wave 4; wave 6 requires everything.
+Parallelism notes: waves 2 and 4 can proceed in parallel after wave 1 (disjoint
+modules); wave 3 can run alongside wave 2 after issue 13. Two cross-wave edges
+break full parallelism and are intentional: issue 28 (wave 4) needs 19 (wave 3),
+and issues 31/32 (wave 5) need 27 (wave 4). Issues 29/30 need only 17. Wave 6
+requires everything (36 additionally depends on 33 so the release cannot ship
+without multi-provider support).
 
 ## Dependency table
 
@@ -93,18 +97,18 @@ requires 17 (fix output) but not wave 4; wave 6 requires everything.
 | 14 | 13, 08 |
 | 15 | 13, 06 |
 | 16 | 13, 07 |
-| 17 | 13, 14, 15, 16 |
+| 17 | 10, 13, 14, 15, 16 |
 | 18 | 02, 04 |
 | 19 | 18 |
 | 20 | 19, 13 |
 | 21 | 02, 04 |
 | 22 | 21, 03 |
 | 23 | 22 |
-| 24 | 22 |
-| 25 | 21, 02 |
+| 24 | 22, 23 |
+| 25 | 02, 21, 22 |
 | 26 | 22, 23, 24, 25 |
 | 27 | 26, 10, 12 |
-| 28 | 26, 19 |
+| 28 | 10, 19, 26, 27 |
 | 29 | 17 |
 | 30 | 29, 10 |
 | 31 | 09, 17, 27, 30 |
@@ -112,18 +116,18 @@ requires 17 (fix output) but not wave 4; wave 6 requires everything.
 | 33 | 18, 19, 20, 28 |
 | 34 | 17, 27, 31 |
 | 35 | 30, 32 |
-| 36 | 34, 35 |
+| 36 | 33, 34, 35 |
 
 ## Coverage: DESIGN.md sections → issues
 
 | DESIGN.md section | Covered by |
 |---|---|
-| §5 Repository layout, §16 test infra bootstrap | 01 |
+| §5 Repository layout, §16 test infra bootstrap, §15/§12.3 error classes + exit-code constants | 01 |
 | §6 Configuration (schema, env, init) | 02 |
-| §7 Finding model, registry, fingerprint, messages | 03 |
-| §12.3 Exit codes, §15 Error handling, CLI surface | 04 |
-| §8.1 Engine + discovery | 05 |
-| §8.2–8.3 Adapters & rule control | 06 (JSX), 07 (Vue), 08 (HTML) |
+| §3 Conformance target (WCAG metadata model), §7 Finding model, registry, fingerprint, messages | 03 (level/version surfaced in reports via 09/10) |
+| §12.3 exit-code enforcement, §15 error handler/formatter, CLI surface, logger | 04 |
+| §8.1 Engine + discovery, §8.3 rule-control mechanism (`applyRuleControls`) | 05 |
+| §8.2 Adapters (rule maps; §8.3 overrides consumed per adapter) | 06 (JSX), 07 (Vue), 08 (HTML) |
 | §12.1 console/json reporters + gate wiring | 09 |
 | §12.1 markdown | 10 |
 | §12.1 sarif (+ research SARIF notes) | 11 |

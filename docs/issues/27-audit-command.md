@@ -10,8 +10,10 @@ Wire provisioning, session, axe, probes, flows, and evidence into
 ## Context
 
 The runtime counterpart of issue 09. DESIGN §11 pipeline + §12 gating.
-Deterministic findings (axe + probes) may gate; advisory (ux/llm, axe
-incomplete) never gate.
+Deterministic findings (axe + probes) may gate; advisory findings never gate —
+that includes all ux/llm findings and, when `audit.includeIncomplete: true`,
+axe "incomplete" results (checks axe could not evaluate conclusively), which
+issue 22 emits as `advisory: true` runtime findings.
 
 ## Scope
 
@@ -19,25 +21,35 @@ incomplete) never gate.
 
 ## Detailed Requirements
 
-1. CLI: `a11y-bot audit [--target <name>...] [--format …] [--output <dir>]
-   [--fail-on <sev>] [--strict] [--update-baseline] [--llm] [--no-evidence]`.
+1. CLI: `a11y-bot audit [--target <name>...]
+   [--format console|json|markdown]… [--output <dir>] [--fail-on <sev>]
+   [--strict] [--update-baseline] [--llm] [--no-evidence]`.
+   - format semantics identical to issue 09 (repeatable, replaces config,
+     same output routing, files named `audit.<ext>`); requesting `sarif` for
+     audit → usage error exit 2 with pointer "runtime SARIF is v2 (DESIGN
+     §12.1)";
+   - `--llm` sets `audit.llmAnalysis: true` for the run (the explicit enable
+     flag from DESIGN §6.2; key still required);
    - `--target` filters configured targets (unknown name → exit 2);
    - zero configured targets → ConfigError with hint to add `audit.targets`;
    - `--no-evidence` runs probes but writes only manifest+JSON (no screenshots)
      — for constrained CI.
-2. Orchestration order per target: provision → per viewport: [load page(s) →
-   axe → probes 23/24] → flows (25) → teardown; pages = target base path only
-   in v1 (multi-path via flows' `goto`) — document explicitly.
+2. Orchestration order per target: provision → per viewport: [load page →
+   axe → probes 23/24] → flows (25) → teardown → `pruneOldRuns` (26) after a
+   successful run; pages = target base URL only in v1 (multi-path via flows'
+   `goto`) — document explicitly.
    Concurrency: targets sequential (deterministic logs); viewports sequential.
    Whole-run wall-clock budget: warn at 15 min (constant).
 3. Findings pipeline: collect → dedupe (24's axe-suppression map) → baseline
    subtraction (12, same file — fingerprints are engine-agnostic) → reports
-   (console/json/markdown; SARIF excluded for runtime — issue 11 rule) →
+   (console/json/markdown; SARIF excluded per DESIGN §12.1 v1 rule) →
    exit gate identical semantics to 09/12.
-4. LLM analyst (28) invoked after evidence completion when enabled
-   (`--llm` or config + key); its advisory findings merge into reports but
-   never the gate; when 28 not yet implemented, the hook logs "analyst not
-   available" (interface stub) — this issue lands independently.
+4. LLM analyst (28) invoked after evidence completion when
+   `audit.llmAnalysis` is true (config or `--llm`) AND a key is present
+   (DESIGN §14.3 explicit-gate rule via issue 18's factory); its advisory
+   findings merge into reports but never the gate; when 28 not yet
+   implemented, the hook logs "analyst not available" (interface stub) — this
+   issue lands independently.
 5. `--update-baseline` covers runtime findings too (shared mechanism; narrowed
    `--target` runs skip stale pruning, mirroring 12's path rule).
 6. Summary console block: targets audited, pages, flows passed/failed,
@@ -55,6 +67,15 @@ incomplete) never gate.
 - [ ] `--no-evidence` writes no PNGs but manifest notes the mode.
 - [ ] Partial target failure (1 of 2 unreachable) → exit reflects surviving
       target's gate; failure recorded as finding + summary line.
+- [ ] Security — no crawling (T9): the browser's visited-URL set (request log)
+      is asserted ⊆ {configured target base URLs + same-origin flow `goto`
+      paths}; a fixture page with an off-origin link proves no navigation
+      happens beyond configured pages.
+- [ ] Security — scrubbing (T3/T7): end-to-end audit of a fixture with
+      `?token=x` URLs yields reports, logs, and evidence with `***` only;
+      env-canary check on all outputs.
+- [ ] Retention wiring: after a successful run, old run dirs pruned per
+      `audit.keepRuns` (integration test with keepRuns: 1).
 
 ## Validation
 

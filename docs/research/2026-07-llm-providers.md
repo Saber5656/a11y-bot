@@ -38,8 +38,10 @@ user configures.
 
 ## Cost & determinism guards (design inputs)
 
-- Per-run caps: `llm.maxCalls` (default 20), `llm.maxInputTokensPerCall`,
-  request timeout (default 60 s), total-run token budget.
+- Per-run caps as realized in the config schema (DESIGN §6.2): `llm.maxCalls`
+  (default 20), `llm.maxOutputTokens` per call, request timeout (default 60 s);
+  input size is bounded by construction (16 KiB per untrusted block, capped
+  image/screenshot counts) rather than a separate token knob.
 - `temperature: 0` and JSON-schema-constrained outputs wherever supported.
 - All LLM output is advisory or re-validated (re-lint gate for patches; schema
   validation for analyst findings). No LLM output ever gates CI by default.
